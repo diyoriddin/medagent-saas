@@ -1,0 +1,25 @@
+{
+  "name": "medagent-saas",
+  "version": "1.0.0",
+  "description": "MedAgent SaaS — Production-Ready AI-Powered Clinic Booking Platform",
+  "private": true,
+  "scripts": {
+    "dev:dashboard": "npm run dev --prefix frontend-dashboard",
+    "dev:mini-app": "npm run dev --prefix mini-app",
+    "build:dashboard": "npm run build --prefix frontend-dashboard",
+    "build:mini-app": "npm run build --prefix mini-app",
+    "docker:up": "docker-compose up --build",
+    "docker:down": "docker-compose down"
+  },
+  "keywords": [
+    "medagent",
+    "saas",
+    "telemed",
+    "telegram-mini-app",
+    "fastapi",
+    "ai-booking",
+    "redlock"
+  ],
+  "author": "MedAgent Team",
+  "license": "MIT"
+}

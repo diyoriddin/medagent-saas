@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database (Multi-tenant Data)
+  postgres:
+    image: postgres:16-alpine
+    container_name: medagent-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: medagent
+      POSTGRES_PASSWORD: medagent_secure_password
+      POSTGRES_DB: medagent_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medagent -d medagent_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis (BullMQ Queue + Distributed Locks)
+  redis:
+    image: redis:7-alpine
+    container_name: medagent-redis
+    restart: always
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Central Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medagent-backend
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://medagent:medagent_secure_password@postgres:5432/medagent_db
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET_KEY: change-this-jwt-secret-in-production-2026
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-sample_token}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ENVIRONMENT: production
+      DEBUG: "false"
+    ports:
+      - "8000:8000"
+
+  # Admin Dashboard (Next.js / React)
+  admin-dashboard:
+    build:
+      context: ./frontend-dashboard
+      dockerfile: Dockerfile
+    container_name: medagent-dashboard
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_API_URL: http://localhost:8000/api/v1
+
+  # Telegram Mini App
+  mini-app:
+    build:
+      context: ./mini-app
+      dockerfile: Dockerfile
+    container_name: medagent-mini-app
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "3001:3001"
+    environment:
+      VITE_API_URL: http://localhost:8000/api/v1
+
+volumes:
+  postgres_data:
+  redis_data:

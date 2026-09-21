@@ -1,0 +1,365 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===== ENUMS =====
+
+enum Role {
+  SUPER_ADMIN
+  CLINIC_ADMIN
+  RECEPTIONIST
+  DOCTOR
+}
+
+enum AppointmentStatus {
+  PENDING          // Bemor hold qilgani, 3 daqiqa kutish
+  CONFIRMED        // Navbat tasdiqlandi
+  IN_PROGRESS      // Shifokor qabul qilmoqda
+  COMPLETED        // Qabul tamom
+  CANCELLED        // Bekor qilindi
+  NO_SHOW          // Bemor kelmadi
+}
+
+enum SlotStatus {
+  AVAILABLE        // Bo'sh
+  HELD             // 180 soniya uchun hold (bemor tasdiqlash jarayonida)
+  BOOKED           // Band (navbat tasdiqlandi)
+}
+
+// ===== CLINIC & MULTI-TENANCY =====
+
+model Clinic {
+  id              String    @id @default(uuid())
+  name            String
+  slug            String    @unique
+  phone           String
+  address         String?
+  city            String?
+  
+  // Telegram
+  botToken        String?   @unique
+  botUsername     String?
+  
+  // Billing
+  subscriptionEnd DateTime
+  isActive        Boolean   @default(true)
+  
+  // Metadata
+  timezone        String    @default("Asia/Tashkent")
+  language        String    @default("uz")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  users           User[]
+  doctors         Doctor[]
+  patients        Patient[]
+  appointments    Appointment[]
+  slots           Slot[]
+  aiConfigs       AIConfig?
+  notifications   Notification[]
+  waitingList     WaitingList[]
+  confirmationLog ConfirmationLog[]
+
+  @@index([botToken])
+  @@index([slug])
+}
+
+// ===== AUTH & USERS =====
+
+model User {
+  id        String    @id @default(uuid())
+  clinicId  String
+  clinic    Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  
+  email     String    @unique
+  password  String    // bcrypted
+  fullName  String
+  role      Role      @default(RECEPTIONIST)
+  
+  isActive  Boolean   @default(true)
+  lastLogin DateTime?
+  
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([clinicId, email])
+  @@index([clinicId])
+  @@index([email])
+}
+
+// ===== DOCTORS & SCHEDULES =====
+
+model Doctor {
+  id           String    @id @default(uuid())
+  clinicId     String
+  clinic       Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  
+  fullName     String
+  specialty    String    // "Kardiologo", "Oftalmolog" va b.
+  bio          String?
+  imageUrl     String?
+  
+  // Pricing
+  price        Float     // So'm
+  durationMin  Int       @default(30)
+  
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relations
+  schedules    Schedule[]
+  appointments Appointment[]
+  slots        Slot[]
+
+  @@index([clinicId])
+  @@index([specialty])
+}
+
+model Schedule {
+  id        String    @id @default(uuid())
+  doctorId  String
+  doctor    Doctor    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  
+  dayOfWeek Int       // 0 (Yak) to 6 (Chupp)
+  startTime String    // "09:00"
+  endTime   String    // "18:00"
+  
+  breakStart String?  // "13:00"
+  breakEnd  String?   // "14:00"
+  
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  @@unique([doctorId, dayOfWeek])
+  @@index([doctorId])
+}
+
+// ===== TIME SLOTS (REAL-TIME MANAGEMENT) =====
+
+model Slot {
+  id            String      @id @default(uuid())
+  clinicId      String
+  clinic        Clinic      @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  
+  doctorId      String
+  doctor        Doctor      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  
+  startTime     DateTime
+  endTime       DateTime
+  
+  status        SlotStatus  @default(AVAILABLE)
+  
+  // Hold logic
+  heldByPatientId String?
+  heldUntil     DateTime?   // Redis bloklash vaqti (180 sec)
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([doctorId, startTime])
+  @@index([clinicId])
+  @@index([doctorId])
+  @@index([status])
+  @@index([startTime])
+}
+
+// ===== PATIENTS & APPOINTMENTS =====
+
+model Patient {
+  id              String      @id @default(uuid())
+  clinicId        String
+  clinic          Clinic      @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  
+  telegramId      BigInt?     @unique
+  firstName       String
+  lastName        String?
+  phone           String
+  
+  // AI/Chat history storage
+  chatHistory     String?     @db.Text // JSON array
+  
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  appointments    Appointment[]
+  notifications   Notification[]
+  waitingList     WaitingList[]
+  confirmationLog ConfirmationLog[]
+
+  @@unique([clinicId, phone])
+  @@index([clinicId])
+  @@index([telegramId])
+}
+
+model Appointment {
+  id          String            @id @default(uuid())
+  clinicId    String
+  clinic      Clinic            @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  
+  doctorId    String
+  doctor      Doctor            @relation(fields: [doctorId], references: [id])
+  
+  patientId   String
+  patient     Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  
+  startTime   DateTime
+  endTime     DateTime
+  
+  status      AppointmentStatus @default(PENDING)
+  
+  notes       String?           @db.Text
+  
+  // No-show tracking
+  noShowReason String?
+  
+  // Confirmation tracking
+  lastConfirmationSent DateTime?
+  isConfirmed Boolean @default(false)
+  
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@unique([doctorId, startTime])
+  @@index([clinicId])
+  @@index([doctorId])
+  @@index([patientId])
+  @@index([status])
+  @@index([startTime])
+}
+
+// ===== WAITING LIST (KUTISH RO'YXATI) =====
+
+model WaitingList {
+  id          String    @id @default(uuid())
+  clinicId    String
+  clinic      Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  
+  patientId   String
+  patient     Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  
+  doctorId    String    // Qaysi shifokorga kutmoqda
+  specialty   String    // Qaysi soha uchun
+  
+  preferredDate DateTime?
+  priority    Int       @default(0) // Yuqori raqam = yuqori prioritet
+  
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  @@index([clinicId])
+  @@index([patientId])
+  @@index([isActive])
+}
+
+// ===== AI & SYSTEM CONFIG =====
+
+model AIConfig {
+  id            String  @id @default(uuid())
+  clinicId      String  @unique
+  clinic        Clinic  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  
+  systemPrompt  String  @db.Text
+  welcomeMsg    String  @db.Text
+  language      String  @default("uz")
+  
+  // LLM model
+  modelProvider String  @default("openai") // "openai", "claude", "gemini"
+  modelName     String  @default("gpt-4-turbo")
+  
+  // Behavior
+  strictMode    Boolean @default(true) // Faqat function calling, diagnoza taqiq
+  maxTokens     Int     @default(2000)
+  
+  temperature   Float   @default(0.7)
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([clinicId])
+}
+
+// ===== NOTIFICATIONS & LOGGING =====
+
+model Notification {
+  id          String    @id @default(uuid())
+  clinicId    String
+  clinic      Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  
+  patientId   String
+  patient     Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  
+  messageType String    // "APPOINTMENT_CONFIRMATION", "APPOINTMENT_REMINDER_24H", "APPOINTMENT_REMINDER_2H"
+  message     String    @db.Text
+  
+  sentVia     String    @default("telegram") // "telegram", "sms"
+  telegramMessageId BigInt?
+  
+  isSent      Boolean   @default(false)
+  sendAttempts Int      @default(0)
+  lastError   String?
+  
+  scheduledFor DateTime
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([clinicId])
+  @@index([patientId])
+  @@index([isSent])
+  @@index([scheduledFor])
+}
+
+// ===== CONFIRMATION LOG (AUTOMATED NO-SHOW PREVENTION) =====
+
+model ConfirmationLog {
+  id              String    @id @default(uuid())
+  clinicId        String
+  clinic          Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  
+  patientId       String
+  patient         Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  
+  appointmentId   String
+  
+  confirmationType String   // "24H_BEFORE", "2H_BEFORE", "MANUAL"
+  status          String    // "PENDING", "DECLINED", "CONFIRMED", "TIME_CHANGED", "CANCELLED"
+  
+  sentAt          DateTime
+  respondedAt     DateTime?
+  
+  createdAt       DateTime  @default(now())
+
+  @@index([clinicId])
+  @@index([appointmentId])
+  @@index([status])
+}
+
+// ===== AUDIT LOG (SECURITY) =====
+
+model AuditLog {
+  id        String    @id @default(uuid())
+  action    String    // "USER_LOGIN", "APPOINTMENT_BOOKED", "NO_SHOW_MARKED"
+  details   String?   @db.Text
+  
+  userId    String?   // Kim qilgani (null if system)
+  entityId  String?   // Qaysi entity
+  
+  ipAddress String?
+  userAgent String?   @db.Text
+  
+  createdAt DateTime  @default(now())
+
+  @@index([action])
+  @@index([createdAt])
+}

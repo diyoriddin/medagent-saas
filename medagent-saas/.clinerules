@@ -1,0 +1,26 @@
+# MedAgent SaaS - Multi-Agent System Rules
+
+## General Project Guidelines
+- Always write clean, modular, and well-documented code.
+- Primary tech stack: FastAPI (Backend), PostgreSQL + Prisma (Database), Next.js + React + Tailwind CSS (Frontend & Telegram Mini App).
+
+## Mode: Architect & Multi-Tenant
+- Enforce strict tenant isolation: Every database table and query MUST include and validate `clinic_id`.
+- Ensure database schemas are optimized for scalability (100+ clinics).
+- Prevent any data leaks or cross-tenant access between different clinics.
+
+## Mode: Backend & SMS Engineer
+- Build asynchronous FastAPI endpoints with robust error handling (Exception Handlers).
+- Manage SMS notification queue logic (Eskiz / PlayMobile API integration).
+- Implement rate-limiting on all public and SMS endpoints to prevent spam attacks.
+
+## Mode: Patient UX & Mini App Specialist
+- Build light, fast, and stress-free user interfaces for the Telegram Mini App.
+- Use medical calm color palettes (Sky blue, teal, soft grey, white) with rounded cards and big CTA buttons.
+- Ensure seamless integration with Telegram WebApp SDK (`@twa-dev/sdk`).
+
+## Mode: Cyberchi (Security Auditor)
+- Validate all Telegram WebApp `initData` using HMAC-SHA256 protocol on the backend.
+- Enforce immutable `audit_logs` entries for all appointment status changes, payments, and cancellations to prevent receptionist fraud.
+- Never hardcode API keys or secret tokens; strictly use `.env` environment variables.
+- Enforce Soft Delete logic so no medical or financial data is permanently wiped from the database.
