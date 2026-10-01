@@ -6,6 +6,7 @@ Main FastAPI Application Entry Point
 
 import logging
 import os
+import redis.asyncio as redis
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -15,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from app.prisma_client import get_prisma, close_prisma
 
 # Load environment variables
 load_dotenv()
@@ -39,14 +42,43 @@ if not os.getenv("DATABASE_URL"):
 
 # ===== LIFESPAN MANAGEMENT =====
 
+# Global Redis client
+redis_client: redis.Redis = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App startup and shutdown logic"""
+    global redis_client
     logger.info(f"🚀 MedAgent SaaS Starting (Environment: {ENVIRONMENT})")
-    # TODO: Initialize database connection, Redis connection
+    
+    # Initialize Prisma client
+    try:
+        await get_prisma()
+        logger.info("✅ Prisma client connected")
+    except Exception as e:
+        logger.error(f"❌ Failed to connect Prisma: {e}")
+        raise
+    
+    # Initialize Redis client
+    try:
+        redis_client = redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+        await redis_client.ping()
+        logger.info("✅ Redis client connected")
+    except Exception as e:
+        logger.warning(f"⚠️ Redis connection failed (continuing without Redis): {e}")
+        redis_client = None
+    
     yield
+    
     logger.info("🛑 MedAgent SaaS Shutting down...")
-    # TODO: Close database and Redis connections
+    # Close Prisma connection
+    await close_prisma()
+    logger.info("✅ Prisma client disconnected")
+    
+    # Close Redis connection
+    if redis_client:
+        await redis_client.close()
+        logger.info("✅ Redis client disconnected")
 
 # ===== FASTAPI APP INITIALIZATION =====
 

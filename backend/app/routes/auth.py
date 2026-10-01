@@ -186,40 +186,43 @@ async def change_password(
     # TODO: Verify user, check old password, update new password
     return {"message": "Password changed successfully"}
 
-# ===== DATABASE FUNCTIONS (SQLAlchemy fallback) =====
-
-from app.db import SessionLocal
-from app.models import User, Clinic
-
+# ===== DATABASE FUNCTIONS (Prisma ORM) =====
 
 async def get_user_from_db(email: str) -> dict:
-    """Get user from database by email using SQLAlchemy."""
-    db = SessionLocal()
+    """Get user from database by email using Prisma ORM."""
     try:
-        user = db.query(User).filter(User.email == email).first()
+        prisma = await get_prisma()
+        user = await prisma.user.find_unique(
+            where={"email": email},
+            include={"clinic": True}
+        )
         if not user:
             return None
         return {
             "id": user.id,
             "email": user.email,
             "password": user.password,
-            "clinicId": user.clinic_id,
+            "clinicId": user.clinicId,
             "role": user.role,
-            "isActive": user.is_active
+            "isActive": user.isActive
         }
-    finally:
-        db.close()
+    except Exception as e:
+        logger.error(f"Error fetching user from DB: {e}")
+        return None
 
 
 async def get_clinic_from_db(clinic_id: str) -> dict:
-    db = SessionLocal()
     try:
-        clinic = db.query(Clinic).filter(Clinic.id == clinic_id).first()
+        prisma = await get_prisma()
+        clinic = await prisma.clinic.find_unique(
+            where={"id": clinic_id}
+        )
         if not clinic:
             return None
         return {"id": clinic.id, "name": clinic.name}
-    finally:
-        db.close()
+    except Exception as e:
+        logger.error(f"Error fetching clinic from DB: {e}")
+        return None
 
 
 async def create_user_in_db(
@@ -229,18 +232,18 @@ async def create_user_in_db(
     full_name: str,
     role: str
 ) -> dict:
-    db = SessionLocal()
     try:
-        user = User(
-            clinic_id=clinic_id,
-            email=email,
-            password=password,
-            full_name=full_name,
-            role=role
+        prisma = await get_prisma()
+        user = await prisma.user.create(
+            data={
+                "clinicId": clinic_id,
+                "email": email,
+                "password": password,
+                "fullName": full_name,
+                "role": role
+            }
         )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
         return {"id": user.id, "email": user.email}
-    finally:
-        db.close()
+    except Exception as e:
+        logger.error(f"Error creating user in DB: {e}")
+        raise

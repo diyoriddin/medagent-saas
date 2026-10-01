@@ -6,7 +6,7 @@ import {
   Users,
   Settings,
   LogOut,
-  Hospital,
+  Building2,
   Activity,
   Radio,
   BarChart3,
@@ -43,7 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
 
           <div className="mt-4 p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/50 flex items-center gap-2.5">
-            <Hospital className="w-4 h-4 text-cyan-400 shrink-0" />
+            <Building2 className="w-4 h-4 text-cyan-400 shrink-0" />
             <div className="min-w-0">
               <span className="text-xs font-semibold text-slate-200 block truncate">
                 MedLife Shifo Markazi

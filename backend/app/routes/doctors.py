@@ -255,7 +255,7 @@ async def emergency_block_doctor(
         logger.error(f"❌ Emergency block error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ===== DATABASE STUBS =====
+# ===== DATABASE FUNCTIONS (Prisma ORM) =====
 
 async def create_doctor_in_db(
     clinic_id: str,
@@ -266,34 +266,33 @@ async def create_doctor_in_db(
     bio: str,
     image_url: str
 ) -> dict:
-    """Create doctor in database"""
-    from app.db import SessionLocal
-    from app.models import Doctor
-
-    db = SessionLocal()
+    """Create doctor in database using Prisma ORM"""
     try:
-        doc = Doctor(
-            clinic_id=clinic_id,
-            full_name=full_name,
-            specialty=specialty,
-            price=price or 0.0,
-            duration_min=duration_min or 30,
+        prisma = await get_prisma()
+        doctor = await prisma.doctor.create(
+            data={
+                "clinicId": clinic_id,
+                "fullName": full_name,
+                "specialty": specialty,
+                "price": price,
+                "durationMin": duration_min,
+                "bio": bio,
+                "imageUrl": image_url
+            }
         )
-        db.add(doc)
-        db.commit()
-        db.refresh(doc)
         return {
-            "id": doc.id,
-            "clinicId": doc.clinic_id,
-            "fullName": doc.full_name,
-            "specialty": doc.specialty,
-            "price": doc.price,
-            "durationMin": doc.duration_min,
-            "isActive": doc.is_active,
-            "createdAt": doc.created_at
+            "id": doctor.id,
+            "clinicId": doctor.clinicId,
+            "fullName": doctor.fullName,
+            "specialty": doctor.specialty,
+            "price": doctor.price,
+            "durationMin": doctor.durationMin,
+            "isActive": doctor.isActive,
+            "createdAt": doctor.createdAt
         }
-    finally:
-        db.close()
+    except Exception as e:
+        logger.error(f"Error creating doctor in DB: {e}")
+        raise
 
 DEFAULT_DOCTORS = [
     {
@@ -359,83 +358,95 @@ DEFAULT_DOCTORS = [
 ]
 
 async def get_doctors_from_db(clinic_id: str, specialty: str = None) -> List[dict]:
-    """Get all doctors with optional specialty filter from DB"""
-    from app.db import SessionLocal
-    from app.models import Doctor
-
-    db = SessionLocal()
+    """Get all doctors with optional specialty filter from DB using Prisma ORM"""
     try:
-        q = db.query(Doctor).filter(Doctor.clinic_id == clinic_id)
+        prisma = await get_prisma()
+        where_clause = {"clinicId": clinic_id}
         if specialty:
-            q = q.filter(Doctor.specialty.ilike(f"%{specialty}%"))
-        docs = q.all()
+            where_clause["specialty"] = {"contains": specialty}
+        
+        doctors = await prisma.doctor.find_many(
+            where=where_clause,
+            order_by={"createdAt": "desc"}
+        )
         return [
             {
-                "id": d.id,
-                "clinicId": d.clinic_id,
-                "fullName": d.full_name,
-                "specialty": d.specialty,
-                "price": d.price,
-                "durationMin": d.duration_min,
-                "isActive": d.is_active,
-                "createdAt": d.created_at
+                "id": doctor.id,
+                "clinicId": doctor.clinicId,
+                "fullName": doctor.fullName,
+                "specialty": doctor.specialty,
+                "price": doctor.price,
+                "durationMin": doctor.durationMin,
+                "isActive": doctor.isActive,
+                "createdAt": doctor.createdAt
             }
-            for d in docs
+            for doctor in doctors
         ]
-    finally:
-        db.close()
+    except Exception as e:
+        logger.error(f"Error fetching doctors from DB: {e}")
+        return []
 
 async def get_doctor_from_db(clinic_id: str, doctor_id: str) -> dict:
-    from app.db import SessionLocal
-    from app.models import Doctor
-
-    db = SessionLocal()
+    """Get single doctor by ID using Prisma ORM"""
     try:
-        d = db.query(Doctor).filter(Doctor.id == doctor_id, Doctor.clinic_id == clinic_id).first()
-        if not d:
+        prisma = await get_prisma()
+        doctor = await prisma.doctor.find_first(
+            where={
+                "id": doctor_id,
+                "clinicId": clinic_id
+            }
+        )
+        if not doctor:
             return None
         return {
-            "id": d.id,
-            "clinicId": d.clinic_id,
-            "fullName": d.full_name,
-            "specialty": d.specialty,
-            "price": d.price,
-            "durationMin": d.duration_min,
-            "isActive": d.is_active,
-            "createdAt": d.created_at
+            "id": doctor.id,
+            "clinicId": doctor.clinicId,
+            "fullName": doctor.fullName,
+            "specialty": doctor.specialty,
+            "price": doctor.price,
+            "durationMin": doctor.durationMin,
+            "isActive": doctor.isActive,
+            "createdAt": doctor.createdAt
         }
-    finally:
-        db.close()
+    except Exception as e:
+        logger.error(f"Error fetching doctor from DB: {e}")
+        return None
 
 async def get_doctor_slots_from_db(clinic_id: str, doctor_id: str, date: str) -> List[dict]:
-    """Generate time slots with AVAILABLE, BOOKED, and WAITING_LIST states"""
-    times = [
-        "09:00", "09:30", "10:00", "10:30", "11:00", "11:30",
-        "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30"
-    ]
-    slots = []
-    for idx, t in enumerate(times):
-        status = "AVAILABLE"
-        if idx in [1, 3, 8]:
-            status = "BOOKED"
-        elif idx == 5:
-            status = "WAITING_LIST"
+    """Get time slots for doctor on specific date using Prisma ORM"""
+    try:
+        prisma = await get_prisma()
+        # Parse date to get start and end of day
+        from datetime import datetime
+        target_date = datetime.strptime(date, "%Y-%m-%d")
+        start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
         
-        h, m = map(int, t.split(":"))
-        em = m + 30
-        eh = h + (1 if em >= 60 else 0)
-        em = em % 60
-        end_time = f"{eh:02d}:{em:02d}"
-        
-        slots.append({
-            "id": f"slot-{doctor_id}-{date}-{t.replace(':', '')}",
-            "doctorId": doctor_id,
-            "date": date,
-            "time": t,
-            "endTime": end_time,
-            "status": status
-        })
-    return slots
+        slots = await prisma.slot.find_many(
+            where={
+                "doctorId": doctor_id,
+                "clinicId": clinic_id,
+                "startTime": {
+                    "gte": start_of_day,
+                    "lte": end_of_day
+                }
+            },
+            order_by={"startTime": "asc"}
+        )
+        return [
+            {
+                "id": slot.id,
+                "doctorId": slot.doctorId,
+                "date": slot.startTime.strftime("%Y-%m-%d"),
+                "time": slot.startTime.strftime("%H:%M"),
+                "endTime": slot.endTime.strftime("%H:%M"),
+                "status": slot.status
+            }
+            for slot in slots
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching doctor slots from DB: {e}")
+        return []
 
 async def create_or_update_schedule(
     doctor_id: str,
@@ -445,19 +456,115 @@ async def create_or_update_schedule(
     break_start: str,
     break_end: str
 ) -> dict:
-    """Create or update schedule"""
-    # TODO: Insert/update Prisma
-    return {"id": "sch-1"}
+    """Create or update schedule using Prisma ORM"""
+    try:
+        prisma = await get_prisma()
+        # Check if schedule already exists
+        existing_schedule = await prisma.schedule.find_first(
+            where={
+                "doctorId": doctor_id,
+                "dayOfWeek": day_of_week
+            }
+        )
+        
+        if existing_schedule:
+            # Update existing schedule
+            schedule = await prisma.schedule.update(
+                where={"id": existing_schedule.id},
+                data={
+                    "startTime": start_time,
+                    "endTime": end_time,
+                    "breakStart": break_start,
+                    "breakEnd": break_end
+                }
+            )
+        else:
+            # Create new schedule
+            schedule = await prisma.schedule.create(
+                data={
+                    "doctorId": doctor_id,
+                    "dayOfWeek": day_of_week,
+                    "startTime": start_time,
+                    "endTime": end_time,
+                    "breakStart": break_start,
+                    "breakEnd": break_end
+                }
+            )
+        
+        return {
+            "id": schedule.id,
+            "doctorId": schedule.doctorId,
+            "dayOfWeek": schedule.dayOfWeek,
+            "startTime": schedule.startTime,
+            "endTime": schedule.endTime,
+            "breakStart": schedule.breakStart,
+            "breakEnd": schedule.breakEnd,
+            "isActive": schedule.isActive,
+            "createdAt": schedule.createdAt
+        }
+    except Exception as e:
+        logger.error(f"Error creating/updating schedule: {e}")
+        raise
+
 
 async def get_doctor_upcoming_appointments(clinic_id: str, doctor_id: str) -> List[dict]:
-    """Get future appointments"""
-    # TODO: Query Prisma WHERE startTime > now()
-    return []
+    """Get future appointments using Prisma ORM"""
+    try:
+        prisma = await get_prisma()
+        from datetime import datetime
+        now = datetime.now()
+        
+        appointments = await prisma.appointment.find_many(
+            where={
+                "doctorId": doctor_id,
+                "clinicId": clinic_id,
+                "startTime": {"gt": now},
+                "status": {"not": "CANCELLED"}
+            },
+            order_by={"startTime": "asc"},
+            include={
+                "patient": True
+            }
+        )
+        return [
+            {
+                "id": appointment.id,
+                "doctorId": appointment.doctorId,
+                "patientId": appointment.patientId,
+                "startTime": appointment.startTime.isoformat(),
+                "endTime": appointment.endTime.isoformat(),
+                "status": appointment.status,
+                "patientName": f"{appointment.patient.firstName} {appointment.patient.lastName or ''}".strip()
+            }
+            for appointment in appointments
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching upcoming appointments: {e}")
+        return []
+
 
 async def update_appointment_status(appointment_id: str, status: str, notes: str = None):
-    """Update appointment status"""
-    # TODO: Update Prisma
-    pass
+    """Update appointment status using Prisma ORM"""
+    try:
+        prisma = await get_prisma()
+        from datetime import datetime
+        appointment = await prisma.appointment.update(
+            where={"id": appointment_id},
+            data={
+                "status": status,
+                "notes": notes,
+                "updatedAt": datetime.now()
+            }
+        )
+        return {
+            "id": appointment.id,
+            "status": appointment.status,
+            "updatedAt": appointment.updatedAt
+        }
+    except Exception as e:
+        logger.error(f"Error updating appointment status: {e}")
+        raise
+
 
 async def add_to_waiting_list(
     clinic_id: str,
@@ -465,11 +572,56 @@ async def add_to_waiting_list(
     doctor_id: str,
     priority: int = 0
 ):
-    """Add patient to waiting list"""
-    # TODO: Insert into WaitingList
-    pass
+    """Add patient to waiting list using Prisma ORM"""
+    try:
+        prisma = await get_prisma()
+        waiting_list_entry = await prisma.waitingList.create(
+            data={
+                "clinicId": clinic_id,
+                "patientId": patient_id,
+                "doctorId": doctor_id,
+                "priority": priority
+            }
+        )
+        return {
+            "id": waiting_list_entry.id,
+            "clinicId": waiting_list_entry.clinicId,
+            "patientId": waiting_list_entry.patientId,
+            "doctorId": waiting_list_entry.doctorId,
+            "priority": waiting_list_entry.priority,
+            "createdAt": waiting_list_entry.createdAt
+        }
+    except Exception as e:
+        logger.error(f"Error adding to waiting list: {e}")
+        raise
+
 
 async def send_reschedule_notification(patient_id: str, message: str):
-    """Send notification to patient"""
-    # TODO: Create Notification record
-    pass
+    """Send notification to patient by creating Notification record"""
+    try:
+        prisma = await get_prisma()
+        # Get patient to find clinicId
+        patient = await prisma.patient.find_unique(
+            where={"id": patient_id}
+        )
+        if not patient:
+            logger.error(f"Patient not found: {patient_id}")
+            return
+            
+        notification = await prisma.notification.create(
+            data={
+                "clinicId": patient.clinicId,
+                "patientId": patient_id,
+                "messageType": "APPOINTMENT_RESCHEDULE",
+                "message": message,
+                "sentVia": "telegram"
+            }
+        )
+        return {
+            "id": notification.id,
+            "message": notification.message,
+            "sentAt": notification.sentAt
+        }
+    except Exception as e:
+        logger.error(f"Error sending reschedule notification: {e}")
+        raise

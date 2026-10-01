@@ -23,8 +23,9 @@ export const initTelegramApp = () => {
   // If not available and we're in development, create a light mock so
   // the app can be tested outside of Telegram (localhost/ngrok).
   if (!tg && import.meta.env.DEV) {
-    if (!window.Telegram) window.Telegram = {} as any;
-    window.Telegram.WebApp = window.Telegram.WebApp || {
+    const win = window as any;
+    win.Telegram = win.Telegram || {};
+    win.Telegram.WebApp = win.Telegram.WebApp || {
       initDataUnsafe: {
         user: {
           id: 0,
@@ -40,7 +41,7 @@ export const initTelegramApp = () => {
         impactOccurred: (_: any) => {},
         notificationOccurred: (_: any) => {},
       },
-    } as any;
+    };
     tg = getTelegramWebApp();
     console.warn('Using Telegram.WebApp mock for local development');
   }
